@@ -206,7 +206,7 @@ QMediaContent tst_QMediaPlayerBackend::selectSoundFile(const QStringList& mediaC
 
 void tst_QMediaPlayerBackend::initTestCase()
 {
-    const QString testFileName = QFINDTESTDATA("testdata/test.wav");
+    const QString testFileName = QLatin1String("/mnt/sdcard/testdata/test.wav");
     QFileInfo wavFile(testFileName);
 
     QVERIFY(wavFile.exists());
@@ -216,13 +216,13 @@ void tst_QMediaPlayerBackend::initTestCase()
     qRegisterMetaType<QMediaContent>();
 
     QStringList mediaCandidates;
-    mediaCandidates << QFINDTESTDATA("testdata/colors.ogv");
-    mediaCandidates << QFINDTESTDATA("testdata/colors.mp4");
+    mediaCandidates << QLatin1String("/mnt/sdcard/testdata/colors.ogv");
+    mediaCandidates << QLatin1String("/mnt/sdcard/testdata/colors.mp4");
     localVideoFile = selectVideoFile(mediaCandidates);
 
     mediaCandidates.clear();
-    mediaCandidates << QFINDTESTDATA("testdata/nokia-tune.mkv");
-    mediaCandidates << QFINDTESTDATA("testdata/nokia-tune.mp3");
+    mediaCandidates << QLatin1String("/mnt/sdcard/testdata/nokia-tune.mkv");
+    mediaCandidates << QLatin1String("/mnt/sdcard/testdata/nokia-tune.mp3");
     localCompressedSoundFile = selectSoundFile(mediaCandidates);
 
     qgetenv("QT_TEST_CI").toInt(&m_inCISystem,10);
@@ -278,9 +278,11 @@ void tst_QMediaPlayerBackend::unloadMedia()
     QSignalSpy positionSpy(&player, SIGNAL(positionChanged(qint64)));
     QSignalSpy durationSpy(&player, SIGNAL(positionChanged(qint64)));
 
+    QMediaPlayer::MediaStatus status = QMediaPlayer::NoMedia;
     player.setMedia(localWavFile);
 
-    QTRY_COMPARE(player.mediaStatus(), QMediaPlayer::LoadedMedia);
+    QTRY_COMPARE((status = player.mediaStatus()), QMediaPlayer::LoadedMedia);
+    qDebug() << "Status: " << status;
 
     QVERIFY(player.position() == 0);
     QVERIFY(player.duration() > 0);
@@ -767,7 +769,7 @@ void tst_QMediaPlayerBackend::playlist()
     QSignalSpy stateSpy(&player, SIGNAL(stateChanged(QMediaPlayer::State)));
     QSignalSpy errorSpy(&player, SIGNAL(error(QMediaPlayer::Error)));
 
-    QFileInfo fileInfo(QFINDTESTDATA("testdata/sample.m3u"));
+    QFileInfo fileInfo(QLatin1String("/mnt/sdcard/testdata/sample.m3u"));
     player.setMedia(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
 
     player.play();
@@ -802,7 +804,7 @@ void tst_QMediaPlayerBackend::playlist()
     errorSpy.clear();
 
     // <<< Invalid - 1st pass >>>
-    fileInfo.setFile(QFINDTESTDATA("testdata/invalid_media.m3u"));
+    fileInfo.setFile(QLatin1String("/mnt/sdcard/testdata/invalid_media.m3u"));
     player.setMedia(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
 
     player.play();
@@ -835,7 +837,7 @@ void tst_QMediaPlayerBackend::playlist()
     errorSpy.clear();
 
     // <<< Invalid2 - 1st pass >>>
-    fileInfo.setFile((QFINDTESTDATA("testdata/invalid_media2.m3u")));
+    fileInfo.setFile((QLatin1String("/mnt/sdcard/testdata/invalid_media2.m3u")));
     player.setMedia(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
 
     player.play();
@@ -868,7 +870,7 @@ void tst_QMediaPlayerBackend::playlist()
     errorSpy.clear();
 
     // <<< Recursive - 1st pass >>>
-    fileInfo.setFile((QFINDTESTDATA("testdata/recursive_master.m3u")));
+    fileInfo.setFile((QLatin1String("/mnt/sdcard/testdata/recursive_master.m3u")));
     player.setMedia(QUrl::fromLocalFile(fileInfo.absoluteFilePath()));
 
     player.play();
