@@ -48,10 +48,10 @@ import android.util.Log;
 import java.lang.Math;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class QtCamera implements Camera.ShutterCallback,
-                                 Camera.PictureCallback,
-                                 Camera.AutoFocusCallback,
-                                 Camera.PreviewCallback
+public class QtCameraListener implements Camera.ShutterCallback,
+                                         Camera.PictureCallback,
+                                         Camera.AutoFocusCallback,
+                                         Camera.PreviewCallback
 {
     private int m_cameraId = -1;
     private Camera m_camera = null;
@@ -64,82 +64,10 @@ public class QtCamera implements Camera.ShutterCallback,
 
     private static final String TAG = "Qt Camera";
 
-    private QtCamera(int id, Camera cam)
+    private QtCameraListener(int id, Camera cam)
     {
         m_cameraId = id;
         m_camera = cam;
-    }
-
-    public static QtCamera open(int cameraId)
-    {
-        try {
-            Camera cam = Camera.open(cameraId);
-            return new QtCamera(cameraId, cam);
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
-        return null;
-    }
-
-    public Camera.Parameters getParameters()
-    {
-        return m_camera.getParameters();
-    }
-
-    public void lock()
-    {
-        try {
-            m_camera.lock();
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
-    }
-
-    public void unlock()
-    {
-        try {
-            m_camera.unlock();
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
-    }
-
-    public void release()
-    {
-        m_isReleased = true;
-        m_camera.release();
-    }
-
-    public void reconnect()
-    {
-        try {
-            m_camera.reconnect();
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
-    }
-
-    public void setDisplayOrientation(int degrees)
-    {
-        m_camera.setDisplayOrientation(degrees);
-    }
-
-    public void setParameters(Camera.Parameters params)
-    {
-        try {
-            m_camera.setParameters(params);
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
-    }
-
-    public void setPreviewTexture(SurfaceTexture surfaceTexture)
-    {
-        try {
-            m_camera.setPreviewTexture(surfaceTexture);
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
     }
 
     public void fetchEachFrame(boolean fetch)
@@ -166,30 +94,6 @@ public class QtCamera implements Camera.ShutterCallback,
         m_camera.setPreviewCallbackWithBuffer(this);
 
         m_camera.startPreview();
-    }
-
-    public void stopPreview()
-    {
-        m_camera.stopPreview();
-    }
-
-    public void autoFocus()
-    {
-        m_camera.autoFocus(this);
-    }
-
-    public void cancelAutoFocus()
-    {
-        m_camera.cancelAutoFocus();
-    }
-
-    public void takePicture()
-    {
-        try {
-            m_camera.takePicture(this, null, this);
-        } catch(Exception e) {
-            Log.d(TAG, e.getMessage());
-        }
     }
 
     public byte[] lockAndFetchPreviewBuffer()
