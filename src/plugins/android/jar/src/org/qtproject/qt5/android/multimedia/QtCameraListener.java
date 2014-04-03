@@ -54,46 +54,31 @@ public class QtCameraListener implements Camera.ShutterCallback,
                                          Camera.PreviewCallback
 {
     private int m_cameraId = -1;
-    private Camera m_camera = null;
-    private byte[] m_cameraPreviewFirstBuffer = null;
-    private byte[] m_cameraPreviewSecondBuffer = null;
-    private int m_actualPreviewBuffer = 0;
+    private byte[][] m_cameraPreviewBuffer;
+    private volatile int m_actualPreviewBuffer = 0;
     private final ReentrantLock m_buffersLock = new ReentrantLock();
-    private boolean m_isReleased = false;
     private boolean m_fetchEachFrame = false;
 
     private static final String TAG = "Qt Camera";
 
-    private QtCameraListener(int id, Camera cam)
+    private QtCameraListener(int id)
     {
         m_cameraId = id;
-        m_camera = cam;
+    }
+
+    public void preparePreviewBuffer(Camera camera)
+    {
+        Camera.Size previewSize = camera.getParameters().getPreviewSize();
+        double bytesPerPixel = ImageFormat.getBitsPerPixel(camera.getParameters().getPreviewFormat()) / 8.0;
+        int bufferSizeNeeded = (int)Math.ceil(bytesPerPixel*previewSize.width*previewSize.height);
+        m_buffersLock.lock();
+        m_cameraPreviewBuffer = new byte[2][bufferSizeNeeded];
+        m_buffersLock.unlock();
     }
 
     public void fetchEachFrame(boolean fetch)
     {
         m_fetchEachFrame = fetch;
-    }
-
-    public void startPreview()
-    {
-        Camera.Size previewSize = m_camera.getParameters().getPreviewSize();
-        double bytesPerPixel = ImageFormat.getBitsPerPixel(m_camera.getParameters().getPreviewFormat()) / 8.0;
-        int bufferSizeNeeded = (int)Math.ceil(bytesPerPixel*previewSize.width*previewSize.height);
-
-        //We need to clear preview buffers queue here, but there is no method to do it
-        //Though just resetting preview callback do the trick
-        m_camera.setPreviewCallback(null);
-        m_buffersLock.lock();
-        if (m_cameraPreviewFirstBuffer == null || m_cameraPreviewFirstBuffer.length < bufferSizeNeeded)
-            m_cameraPreviewFirstBuffer = new byte[bufferSizeNeeded];
-        if (m_cameraPreviewSecondBuffer == null || m_cameraPreviewSecondBuffer.length < bufferSizeNeeded)
-            m_cameraPreviewSecondBuffer = new byte[bufferSizeNeeded];
-        addCallbackBuffer();
-        m_buffersLock.unlock();
-        m_camera.setPreviewCallbackWithBuffer(this);
-
-        m_camera.startPreview();
     }
 
     public byte[] lockAndFetchPreviewBuffer()
@@ -103,10 +88,7 @@ public class QtCameraListener implements Camera.ShutterCallback,
         //We should reset actualBuffer flag here to make sure we will not use old preview with future captures
         byte[] result = null;
         m_buffersLock.lock();
-        if (m_actualPreviewBuffer == 1)
-            result = m_cameraPreviewFirstBuffer;
-        else if (m_actualPreviewBuffer == 2)
-            result = m_cameraPreviewSecondBuffer;
+        result = m_cameraPreviewBuffer[(m_actualPreviewBuffer == 1) ? 0 : 1];
         m_actualPreviewBuffer = 0;
         return result;
     }
@@ -117,14 +99,9 @@ public class QtCameraListener implements Camera.ShutterCallback,
             m_buffersLock.unlock();
     }
 
-    private void addCallbackBuffer()
+    public byte[] callbackBuffer()
     {
-        if (m_isReleased)
-            return;
-
-        m_camera.addCallbackBuffer((m_actualPreviewBuffer == 1)
-                                    ? m_cameraPreviewSecondBuffer
-                                    : m_cameraPreviewFirstBuffer);
+        return m_cameraPreviewBuffer[(m_actualPreviewBuffer == 1) ? 1 : 0];
     }
 
     @Override
@@ -147,13 +124,13 @@ public class QtCameraListener implements Camera.ShutterCallback,
         if (data != null && m_fetchEachFrame)
             notifyFrameFetched(m_cameraId, data);
 
-        if (data == m_cameraPreviewFirstBuffer)
+        if (data == m_cameraPreviewBuffer[0])
             m_actualPreviewBuffer = 1;
-        else if (data == m_cameraPreviewSecondBuffer)
+        else if (data == m_cameraPreviewBuffer[1])
             m_actualPreviewBuffer = 2;
         else
             m_actualPreviewBuffer = 0;
-        addCallbackBuffer();
+        camera.addCallbackBuffer(m_cameraPreviewBuffer[(m_actualPreviewBuffer == 1) ? 1 : 0]);
         m_buffersLock.unlock();
     }
 

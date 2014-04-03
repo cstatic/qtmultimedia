@@ -129,7 +129,7 @@ public:
     JCameraPrivate();
     ~JCameraPrivate();
 
-    Q_INVOKABLE bool init(int cameraId, JCamera *q);
+    Q_INVOKABLE bool init(int cameraId);
 
     Q_INVOKABLE void release();
     Q_INVOKABLE void lock();
@@ -166,6 +166,7 @@ public:
     Q_INVOKABLE void setFocusAreas(const QList<QRect> &areas);
 
     Q_INVOKABLE void autoFocus();
+    Q_INVOKABLE void cancelAutoFocus();
 
     Q_INVOKABLE bool isAutoExposureLockSupported();
     Q_INVOKABLE bool getAutoExposureLock();
@@ -196,6 +197,8 @@ public:
     Q_INVOKABLE void startPreview();
     Q_INVOKABLE void stopPreview();
 
+    Q_INVOKABLE void takePicture();
+
     Q_INVOKABLE void fetchEachFrame(bool fetch);
     Q_INVOKABLE void fetchLastPreviewFrame();
 
@@ -203,7 +206,6 @@ public:
 
     Q_INVOKABLE QStringList callParametersStringListMethod(const QByteArray &methodName);
 
-    JCamera *q_ptr;
     int m_cameraId;
     QMutex m_parametersMutex;
     QSize m_previewSize;
@@ -211,8 +213,8 @@ public:
     QJNIObjectPrivate m_info;
     QJNIObjectPrivate m_parameters;
     QJNIObjectPrivate m_camera;
-
-    Q_DECLARE_PUBLIC(JCamera)
+    QJNIObjectPrivate m_cameraListener;
+    bool m_fetchEachFrame;
 
 Q_SIGNALS:
     void previewSizeChanged();
@@ -252,7 +254,10 @@ JCamera::~JCamera()
         g_objectMap.remove(d->m_cameraId);
         g_objectMapMutex.unlock();
     }
-    d->deleteLater();
+
+    release();
+    m_worker->exit();
+    m_worker->wait(5000);
 }
 
 JCamera *JCamera::open(int cameraId)
@@ -261,17 +266,21 @@ JCamera *JCamera::open(int cameraId)
     QThread *worker = new QThread;
     worker->start();
     d->moveToThread(worker);
+    connect(worker, &QThread::finished, d, &JCameraPrivate::deleteLater);
     bool ok = false;
-    QMetaObject::invokeMethod(d, "init", Qt::BlockingQueuedConnection, Q_ARG(int, cameraId), Q_RETURN_ARG(bool, ok));
+    QMetaObject::invokeMethod(d, "init", Qt::BlockingQueuedConnection, Q_RETURN_ARG(bool, ok), Q_ARG(int, cameraId));
     if (!ok) {
         worker->quit();
+        worker->wait();
         delete d;
         delete worker;
         return 0;
-
     }
 
     JCamera *q = new JCamera(d, worker);
+    g_objectMapMutex.lock();
+    g_objectMap.insert(cameraId, q);
+    g_objectMapMutex.unlock();
     return q;
 }
 
@@ -296,13 +305,13 @@ void JCamera::unlock()
 void JCamera::reconnect()
 {
     Q_D(JCamera);
-    QMetaObject::invokeMethod(d, "callVoidMethod", Q_ARG(QByteArray, "reconnect"));
+    QMetaObject::invokeMethod(d, "reconnect");
 }
 
 void JCamera::release()
 {
     Q_D(JCamera);
-    QMetaObject::invokeMethod(d, "release");
+    QMetaObject::invokeMethod(d, "release", Qt::BlockingQueuedConnection);
 }
 
 JCamera::CameraFacing JCamera::getFacing()
@@ -459,7 +468,7 @@ void JCamera::autoFocus()
 void JCamera::cancelAutoFocus()
 {
     Q_D(JCamera);
-    QMetaObject::invokeMethod(d, "callVoidMethod", Q_ARG(QByteArray, "cancelAutoFocus"));
+    QMetaObject::invokeMethod(d, "cancelAutoFocus", Qt::QueuedConnection);
 }
 
 bool JCamera::isAutoExposureLockSupported()
@@ -605,7 +614,7 @@ void JCamera::setJpegQuality(int quality)
 void JCamera::takePicture()
 {
     Q_D(JCamera);
-    QMetaObject::invokeMethod(d, "callVoidMethod", Q_ARG(QByteArray, "takePicture"));
+    QMetaObject::invokeMethod(d, "takePicture", Qt::BlockingQueuedConnection);
 }
 
 void JCamera::fetchEachFrame(bool fetch)
@@ -623,7 +632,7 @@ void JCamera::fetchLastPreviewFrame()
 QJNIObjectPrivate JCamera::getCameraObject()
 {
     Q_D(JCamera);
-    return d->m_camera.getObjectField("m_camera", "Landroid/hardware/Camera;");
+    return d->m_camera;
 }
 
 void JCamera::startPreview()
@@ -639,7 +648,8 @@ void JCamera::stopPreview()
 }
 
 JCameraPrivate::JCameraPrivate()
-    : QObject()
+    : QObject(),
+      m_parametersMutex(QMutex::Recursive)
 {
 }
 
@@ -647,10 +657,8 @@ JCameraPrivate::~JCameraPrivate()
 {
 }
 
-bool JCameraPrivate::init(int cameraId, JCamera *q)
+bool JCameraPrivate::init(int cameraId)
 {
-    Q_ASSERT(q_ptr == 0);
-    q_ptr = q;
     m_cameraId = cameraId;
     m_camera = QJNIObjectPrivate::callStaticObjectMethod("android/hardware/Camera",
                                                          "open",
@@ -660,10 +668,7 @@ bool JCameraPrivate::init(int cameraId, JCamera *q)
     if (!m_camera.isValid())
         return false;
 
-    g_objectMapMutex.lock();
-    g_objectMap.insert(cameraId, q);
-    g_objectMapMutex.unlock();
-
+    m_cameraListener = QJNIObjectPrivate(g_qtCameraListenerClass, "(I)V", m_cameraId);
     m_info = QJNIObjectPrivate("android/hardware/Camera$CameraInfo");
     m_camera.callStaticMethod<void>("android/hardware/Camera",
                                     "getCameraInfo",
@@ -684,7 +689,8 @@ void JCameraPrivate::release()
     m_parametersMutex.lock();
     m_parameters = QJNIObjectPrivate();
     m_parametersMutex.unlock();
-    m_camera.callMethod<void>("release");
+    if (m_camera.isValid())
+        m_camera.callMethod<void>("release");
 }
 
 void JCameraPrivate::lock()
@@ -699,7 +705,14 @@ void JCameraPrivate::unlock()
 
 void JCameraPrivate::reconnect()
 {
+    QJNIEnvironmentPrivate env;
     m_camera.callMethod<void>("reconnect");
+    if (env->ExceptionCheck()) {
+#ifdef QT_DEBUG
+        env->ExceptionDescribe();
+#endif // QT_DEBUG
+        env->ExceptionDescribe();
+    }
 }
 
 JCamera::CameraFacing JCameraPrivate::getFacing()
@@ -982,8 +995,15 @@ void JCameraPrivate::setFocusAreas(const QList<QRect> &areas)
 
 void JCameraPrivate::autoFocus()
 {
-    m_camera.callMethod<void>("autoFocus");
+    m_camera.callMethod<void>("autoFocus",
+                              "(Landroid/hardware/Camera$AutoFocusCallback;)V",
+                              m_cameraListener.object());
     emit autoFocusStarted();
+}
+
+void JCameraPrivate::cancelAutoFocus()
+{
+    m_camera.callMethod<void>("cancelAutoFocus");
 }
 
 bool JCameraPrivate::isAutoExposureLockSupported()
@@ -1232,6 +1252,18 @@ void JCameraPrivate::setJpegQuality(int quality)
 
 void JCameraPrivate::startPreview()
 {
+    //We need to clear preview buffers queue here, but there is no method to do it
+    //Though just resetting preview callback do the trick
+    m_camera.callMethod<void>("setPreviewCallback",
+                              "(Landroid/hardware/Camera$PreviewCallback;)V",
+                              jobject(0));
+    m_cameraListener.callMethod<void>("preparePreviewBuffer", "(Landroid/hardware/Camera;)V", m_camera.object());
+    QJNIObjectPrivate buffer = m_cameraListener.callObjectMethod<jbyteArray>("callbackBuffer");
+    Q_ASSERT(buffer.isValid());
+    m_camera.callMethod<void>("addCallbackBuffer", "([B)V", buffer.object());
+    m_camera.callMethod<void>("setPreviewCallbackWithBuffer",
+                              "(Landroid/hardware/Camera$PreviewCallback;)V",
+                              m_cameraListener.object());
     m_camera.callMethod<void>("startPreview");
     emit previewStarted();
 }
@@ -1242,17 +1274,27 @@ void JCameraPrivate::stopPreview()
     emit previewStopped();
 }
 
+void JCameraPrivate::takePicture()
+{
+    m_camera.callMethod<void>("takePicture", "(Landroid/hardware/Camera$ShutterCallback;" \
+                                             "Landroid/hardware/Camera$PictureCallback;" \
+                                             "Landroid/hardware/Camera$PictureCallback;)V",
+                                              m_cameraListener.object(),
+                                              jobject(0),
+                                              m_cameraListener.object());
+}
+
 void JCameraPrivate::fetchEachFrame(bool fetch)
 {
-    m_camera.callMethod<void>("fetchEachFrame", "(Z)V", fetch);
+    m_cameraListener.callMethod<void>("fetchEachFrame", "(Z)V", fetch);
 }
 
 void JCameraPrivate::fetchLastPreviewFrame()
 {
     QJNIEnvironmentPrivate env;
-    QJNIObjectPrivate dataObj = m_camera.callObjectMethod("lockAndFetchPreviewBuffer", "()[B");
+    QJNIObjectPrivate dataObj = m_cameraListener.callObjectMethod("lockAndFetchPreviewBuffer", "()[B");
     if (!dataObj.object()) {
-        m_camera.callMethod<void>("unlockPreviewBuffer");
+        m_cameraListener.callMethod<void>("unlockPreviewBuffer");
         return;
     }
     jbyteArray data = static_cast<jbyteArray>(dataObj.object());
@@ -1260,7 +1302,7 @@ void JCameraPrivate::fetchLastPreviewFrame()
     int arrayLength = env->GetArrayLength(data);
     bytes.resize(arrayLength);
     env->GetByteArrayRegion(data, 0, arrayLength, (jbyte*)bytes.data());
-    m_camera.callMethod<void>("unlockPreviewBuffer");
+    m_cameraListener.callMethod<void>("unlockPreviewBuffer");
 
     emit previewFetched(bytes);
 }
@@ -1284,11 +1326,15 @@ QStringList JCameraPrivate::callParametersStringListMethod(const QByteArray &met
 
         if (list.isValid()) {
             int count = list.callMethod<jint>("size");
+            QJNIEnvironmentPrivate env;
             for (int i = 0; i < count; ++i) {
                 QJNIObjectPrivate string = list.callObjectMethod("get",
                                                                  "(I)Ljava/lang/Object;",
                                                                  i);
-
+                if (env->ExceptionCheck()) {
+                    env->ExceptionDescribe();
+                    env->ExceptionClear();
+                }
                 stringList.append(string.toString());
             }
         }

@@ -178,8 +178,8 @@ private:
     JCamera(JCameraPrivate *d, QThread *worker);
 
     Q_DECLARE_PRIVATE(JCamera)
-    QScopedPointer<JCameraPrivate> d_ptr;
-    QThread *m_worker;
+    JCameraPrivate *d_ptr;
+    QScopedPointer<QThread> m_worker;
 };
 
 QT_END_NAMESPACE
